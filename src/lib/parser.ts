@@ -115,49 +115,68 @@ function parseDateFromText(text: string): string | undefined {
   return undefined;
 }
 
-function parseTimeFromText(text: string): string | undefined {
-  const n = normalize(text);
+const NUM_WORD = '(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
 
-  const ampm = n.match(/\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/);
+/** Speech-to-text often returns "seven thirty p.m." or "half past seven" — turn those into digits. */
+function normalizeTimeWords(n: string): string {
+  return n
+    .replace(/\b([ap]) m\b/g, '$1m')
+    .replace(new RegExp(`\\bhalf past ${NUM_WORD}\\b`, 'g'), (_, w: string) => `${WORD_NUMBERS[w]}:30`)
+    .replace(new RegExp(`\\b${NUM_WORD} thirty\\b`, 'g'), (_, w: string) => `${WORD_NUMBERS[w]}:30`)
+    .replace(new RegExp(`\\b${NUM_WORD} o'?clock\\b`, 'g'), (_, w: string) => `${WORD_NUMBERS[w]} oclock`)
+    .replace(new RegExp(`\\b${NUM_WORD}(?= ?[ap]m\\b)`, 'g'), (w: string) => String(WORD_NUMBERS[w]))
+    .replace(new RegExp(`\\bat ${NUM_WORD}\\b`, 'g'), (_, w: string) => `at ${WORD_NUMBERS[w]}`);
+}
+
+/** Remove date expressions so their numbers are not mistaken for hours. */
+function stripDates(n: string): string {
+  return n
+    .replace(/\b20\d{2}-\d{1,2}-\d{1,2}\b/g, ' ')
+    .replace(/\b\d{1,2}[/-]\d{1,2}(?:[/-]20\d{2})?\b/g, ' ')
+    .replace(
+      /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,?\s*20\d{2})?\b/g,
+      ' ',
+    );
+}
+
+function hhmm(h: number, m: number): string {
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function parseTimeFromText(text: string, currentField: BookingField | null): string | undefined {
+  const n = normalizeTimeWords(stripDates(normalize(text)));
+
+  const ampm = n.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
   if (ampm) {
     let h = Number(ampm[1]);
     const m = ampm[2] ? Number(ampm[2]) : 0;
-    const period = ampm[3].replace(/\./g, '');
-    if (period.startsWith('p') && h < 12) h += 12;
-    if (period.startsWith('a') && h === 12) h = 0;
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-    }
+    if (ampm[3] === 'pm' && h < 12) h += 12;
+    if (ampm[3] === 'am' && h === 12) h = 0;
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return hhmm(h, m);
   }
 
-  const twentyFour = n.match(/\bat\s+(\d{1,2}):(\d{2})\b/) || n.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
-  if (twentyFour && !/\b(a\.?m\.?|p\.?m\.?)\b/.test(n)) {
-    const h = Number(twentyFour[1]);
-    const m = Number(twentyFour[2]);
-    // Bare "7:00" during booking usually means evening if 1-11
-    let hour = h;
-    if (h >= 1 && h <= 11 && !n.includes(':')) {
-      // handled below
-    }
-    if (/^\d{1,2}:\d{2}$/.test(twentyFour[0].replace(/^at\s+/, '')) || n.includes('at')) {
-      if (h >= 1 && h <= 9 && m === 0) {
-        // ambiguous — prefer dinner for single-digit hours without am/pm
-        hour = h + 12;
-      }
-      return `${String(hour).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-    }
+  const clock = n.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  if (clock) {
+    let h = Number(clock[1]);
+    // No am/pm: single-digit hours mean evening for a dinner booking ("6:30" → 6:30 PM)
+    if (h >= 1 && h <= 9) h += 12;
+    return hhmm(h, Number(clock[2]));
   }
 
-  const bareHour = n.match(/\b(?:at\s+)?(\d{1,2})\s*(o'?clock)?\b/);
-  if (bareHour && !ampm) {
+  // A bare number is a guest count when Ava asked for guests, or when it reads like one
+  // ("for 4", "4 people"). Only "at 7" / "7 o'clock" count as a time there.
+  const explicitHour =
+    n.match(/\bat\s+(\d{1,2})\b(?!\s*(?:people|ppl|pax|persons?|guests?|diners|of us))/) ||
+    n.match(/\b(\d{1,2})\s*oclock\b/);
+  const looseHour =
+    currentField === 'guests' || currentField === 'contact' || currentField === 'name'
+      ? null
+      : n.match(/(?<!\b(?:for|of|party of|table for)\s)\b(\d{1,2})\b(?!\s*(?:people|ppl|pax|persons?|guests?|diners|of us))/);
+  const bareHour = explicitHour ?? looseHour;
+  if (bareHour) {
     let h = Number(bareHour[1]);
     if (h >= 1 && h <= 11) h += 12; // assume evening
-    if (h === 12) {
-      /* noon/midnight ambiguous — treat as noon dinner edge; leave 12:00 */
-    }
-    if (h >= 11 && h <= 22) {
-      return `${String(h).padStart(2, '0')}:00`;
-    }
+    if (h >= 11 && h <= 22) return hhmm(h, 0);
   }
 
   if (/\bnoon\b/.test(n) || /\bmidday\b/.test(n)) return '12:00';
@@ -168,23 +187,21 @@ function parseTimeFromText(text: string): string | undefined {
 
 function parseGuests(text: string): number | undefined {
   const n = normalize(text);
+  const toNum = (raw: string) => WORD_NUMBERS[raw] ?? Number(raw);
 
-  const party = n.match(/\b(?:party of|table for|for)\s+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/);
+  const party = n.match(new RegExp(`\\b(?:party of|table for|for)\\s+(\\d{1,2}|${NUM_WORD.slice(1, -1)})\\b(?!:)`));
   if (party) {
-    const raw = party[1];
-    const num = WORD_NUMBERS[raw] ?? Number(raw);
+    const num = toNum(party[1]);
     if (num >= 1 && num <= 12) return num;
   }
 
-  const people = n.match(/\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(?:people|guests|persons|diners)?\b/);
+  // Numbers only count as guests with a guest word ("4 people"); a lone number is
+  // handled by the guests-field check in parseUserUtterance.
+  const people = n.match(
+    new RegExp(`\\b(\\d{1,2}|${NUM_WORD.slice(1, -1)})\\s*(?:people|ppl|pax|persons?|guests?|diners|of us)\\b`),
+  );
   if (people) {
-    const raw = people[1];
-    const num = WORD_NUMBERS[raw] ?? Number(raw);
-    // Avoid treating years/dates as guest counts when date words present
-    if (/\b(20\d{2}|january|february|march|april|june|july|august|september|october|november|december)\b/.test(n) && !/people|guests|party|table for|for\s+\d/.test(n)) {
-      // only accept if clearly guest-related or sole number in short reply
-      if (n.split(' ').length > 4) return undefined;
-    }
+    const num = toNum(people[1]);
     if (num >= 1 && num <= 12) return num;
   }
 
@@ -231,14 +248,18 @@ function parseContact(text: string): { contact: string; contactType: 'phone' | '
   if (email) {
     return { contact: email[0], contactType: 'email' };
   }
-  const digits = text.replace(/[^\d+]/g, '');
-  const phoneish = text.match(/(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}/);
-  if (phoneish) {
-    return { contact: phoneish[0].trim(), contactType: 'phone' };
-  }
-  // Short reply that is mostly digits
-  if (/^[\d\s()+.-]{7,}$/.test(text.trim()) && digits.replace(/\D/g, '').length >= 7) {
-    return { contact: text.trim(), contactType: 'phone' };
+  // A run of digits with the usual separators. It must be exactly 10 digits
+  // (or 11 with a leading 1), so longer or shorter numbers are not silently cut.
+  const run = text.match(/\+?\d[\d\s().-]{5,}\d/);
+  if (run) {
+    let digits = run[0].replace(/\D/g, '');
+    if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1);
+    if (digits.length === 10) {
+      return {
+        contact: `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`,
+        contactType: 'phone',
+      };
+    }
   }
   return undefined;
 }
@@ -250,12 +271,12 @@ function detectCorrection(text: string): { field?: BookingField; wantsCorrection
     /\b(wrong|mistake)\b/.test(n)
   ) {
     const fields: { key: BookingField; re: RegExp }[] = [
-      { key: 'date', re: /\b(date|day)\b/ },
-      { key: 'time', re: /\b(time|hour)\b/ },
-      { key: 'guests', re: /\b(guest|people|party|size)\b/ },
-      { key: 'seating', re: /\b(seat|seating|outdoor|indoor|patio|bar|window)\b/ },
-      { key: 'name', re: /\b(name)\b/ },
-      { key: 'contact', re: /\b(contact|phone|email|e-mail)\b/ },
+      { key: 'date', re: /\b(dates?|days?)\b/ },
+      { key: 'time', re: /\b(times?|hours?)\b/ },
+      { key: 'guests', re: /\b(guests?|people|ppl|party|party size|size|headcount)\b/ },
+      { key: 'seating', re: /\b(seats?|seating|outdoor|indoor|patio|bar|window)\b/ },
+      { key: 'name', re: /\b(names?)\b/ },
+      { key: 'contact', re: /\b(contacts?|phone|number|email|e-mail)\b/ },
     ];
     for (const f of fields) {
       if (f.re.test(n)) return { field: f.key, wantsCorrection: true };
@@ -313,7 +334,7 @@ export function parseUserUtterance(
   }
 
   const date = parseDateFromText(text);
-  const time = parseTimeFromText(text);
+  const time = parseTimeFromText(text, currentField);
   const guests = parseGuests(text);
   const seating = parseSeating(text);
   const contact = parseContact(text);
@@ -352,8 +373,13 @@ export function parseUserUtterance(
 
   if (currentField === 'contact' && !contact && Object.keys(result.draftPatch).length === 0) {
     if (!result.wantsCorrection) {
+      const digitCount = text.replace(/\D/g, '').length;
       result.invalidReason =
-        'Please share a phone number or email so we can reach you about the reservation.';
+        digitCount >= 5
+          ? `That phone number has ${digitCount} digits — it should have 10, like 416-555-0199. You can also share an email instead.`
+          : /@/.test(text)
+            ? 'That email address looks incomplete. Please use a format like name@example.com.'
+            : 'Please share a phone number or email so we can reach you about the reservation.';
     }
   }
 

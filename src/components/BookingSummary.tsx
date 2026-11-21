@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { formatDisplayDate, formatDisplayTime } from '../lib/availability';
 import { seatingLabel } from '../lib/parser';
 import type { BookingDraft, BookingField } from '../lib/types';
@@ -41,7 +42,27 @@ const ROWS: { field: BookingField; label: string; value: (d: BookingDraft) => st
   },
 ];
 
+function rowHasValue(draft: BookingDraft, field: BookingField): boolean {
+  if (field === 'contact') return Boolean(draft.contact);
+  return draft[field] !== undefined && draft[field] !== '';
+}
+
 export function BookingSummary({ draft, onEdit, editable }: Props) {
+  // Remember the previous draft so rows whose value just changed can be highlighted.
+  // (Adjusting state during render is React's recommended pattern for this.)
+  const [prevDraft, setPrevDraft] = useState(draft);
+  const [changed, setChanged] = useState<{ fields: BookingField[]; round: number }>({
+    fields: [],
+    round: 0,
+  });
+  if (prevDraft !== draft) {
+    const fields = ROWS.filter(
+      (r) => rowHasValue(draft, r.field) && r.value(prevDraft) !== r.value(draft),
+    ).map((r) => r.field);
+    setPrevDraft(draft);
+    setChanged((c) => ({ fields, round: fields.length > 0 ? c.round + 1 : c.round }));
+  }
+
   const filled = ROWS.filter((r) => {
     if (r.field === 'contact') return Boolean(draft.contact);
     return draft[r.field] !== undefined && draft[r.field] !== '';
@@ -61,10 +82,22 @@ export function BookingSummary({ draft, onEdit, editable }: Props) {
             row.field === 'contact'
               ? Boolean(draft.contact)
               : draft[row.field] !== undefined && draft[row.field] !== '';
+          const justChanged = changed.fields.includes(row.field);
+          const classes = [hasValue ? 'is-filled' : '', justChanged ? 'is-updated' : '']
+            .filter(Boolean)
+            .join(' ');
           return (
-            <li key={row.field} className={hasValue ? 'is-filled' : ''}>
+            // A new key on each change remounts the row so the highlight animation replays.
+            <li key={justChanged ? `${row.field}-${changed.round}` : row.field} className={classes}>
               <div>
-                <span className="summary__label">{row.label}</span>
+                <span className="summary__label">
+                  {row.label}
+                  {justChanged && (
+                    <span className="summary__updated" aria-hidden="true">
+                      Updated
+                    </span>
+                  )}
+                </span>
                 <span className="summary__value">{row.value(draft)}</span>
               </div>
               {editable && (

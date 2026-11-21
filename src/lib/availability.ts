@@ -85,6 +85,12 @@ export function isValidReservationDate(iso: string): { ok: true } | { ok: false;
   if (isPastDate(iso)) {
     return { ok: false, reason: 'That date is in the past. Please choose today or a future date.' };
   }
+  if (iso === toIsoDate(todayLocal()) && !hasSeatingLeftToday()) {
+    return {
+      ok: false,
+      reason: 'We’re done seating for today — our last seating is 9:30 PM. Would tomorrow or another day work?',
+    };
+  }
   const max = todayLocal();
   max.setDate(max.getDate() + 60);
   if (d > max) {
@@ -93,8 +99,23 @@ export function isValidReservationDate(iso: string): { ok: true } | { ok: false;
   return { ok: true };
 }
 
+/** True when the slot is today and its start time has already passed. */
+export function isPastSlot(dateIso: string, time: string): boolean {
+  if (dateIso !== toIsoDate(todayLocal())) return false;
+  const now = new Date();
+  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  return time <= nowHHMM;
+}
+
+/** True when today still has at least one seating left. */
+export function hasSeatingLeftToday(): boolean {
+  const today = toIsoDate(todayLocal());
+  return AVAILABLE_TIMES.some((t) => !isPastSlot(today, t));
+}
+
 function slotOpen(dateIso: string, time: string, seating?: string): boolean {
   if (!AVAILABLE_TIMES.includes(time as (typeof AVAILABLE_TIMES)[number])) return false;
+  if (isPastSlot(dateIso, time)) return false;
   if (ALWAYS_UNAVAILABLE.has(time)) return false;
 
   const blocked = BLOCKED_SLOTS[dateIso] ?? [];
@@ -130,6 +151,17 @@ export function isTimeAvailable(
       ok: false,
       reason: `We seat on the half hour from 11:00 AM–1:30 PM and 5:00–9:30 PM. “${formatDisplayTime(time)}” is outside our hours.`,
       suggestions: suggestTimes(dateIso, seating),
+    };
+  }
+
+  if (isPastSlot(dateIso, time)) {
+    const next = suggestTimes(dateIso, seating);
+    return {
+      ok: false,
+      reason: next.length
+        ? `${formatDisplayTime(time)} today has already passed. Please pick a later time.`
+        : `${formatDisplayTime(time)} today has already passed, and there are no seatings left today. Try another day.`,
+      suggestions: next,
     };
   }
 

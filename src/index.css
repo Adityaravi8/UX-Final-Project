@@ -535,6 +535,50 @@ a {
   border-color: rgba(63, 122, 106, 0.35);
 }
 
+/* Row highlight when a value is added or changed (feedback for edits). */
+.summary__list li.is-updated {
+  animation: summary-updated 2.4s ease-out both;
+}
+
+.summary__updated {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--champagne);
+  color: var(--ink);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 1;
+  animation: summary-updated-tag 2.4s ease-out both;
+}
+
+@keyframes summary-updated {
+  0% {
+    border-color: var(--champagne);
+    background: rgba(232, 184, 109, 0.28);
+  }
+  60% {
+    border-color: var(--champagne);
+    background: rgba(232, 184, 109, 0.14);
+  }
+  100% {
+    border-color: rgba(63, 122, 106, 0.35);
+    background: rgba(0, 0, 0, 0.18);
+  }
+}
+
+@keyframes summary-updated-tag {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 .summary__label {
   display: block;
   font-size: 0.7rem;
@@ -727,5 +771,15 @@ a {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* No fade: keep the latest change marked until the next one. */
+  .summary__list li.is-updated {
+    animation: none !important;
+    border-color: var(--champagne);
+  }
+
+  .summary__updated {
+    animation: none !important;
   }
 }

@@ -2,9 +2,11 @@ import {
   formatDisplayDate,
   formatDisplayTime,
   generateConfirmationCode,
+  hasSeatingLeftToday,
   isTimeAvailable,
   isValidReservationDate,
   suggestTimes,
+  todayLocal,
 } from './availability';
 import {
   FIELD_ORDER,
@@ -33,14 +35,27 @@ function msg(role: ChatMessage['role'], text: string, source?: ChatMessage['sour
   };
 }
 
+const EDIT_CHOICES: QuickChoice[] = [
+  { label: 'Date', value: 'change date' },
+  { label: 'Time', value: 'change time' },
+  { label: 'Guests', value: 'change guests' },
+  { label: 'Seating', value: 'change seating' },
+  { label: 'Name', value: 'change name' },
+  { label: 'Contact', value: 'change contact' },
+];
+
 export function greetingMessage(): string {
   return "Hi, I'm Ava — your TableTalk host. I can reserve a table for you by voice or typing. I'll need a date, time, party size, seating preference, your name, and one contact (phone or email). What date works for you?";
 }
 
 export function fieldPrompt(field: BookingField): string {
   switch (field) {
-    case 'date':
-      return 'What date would you like? You can say “tomorrow”, a weekday, or a date like March 20.';
+    case 'date': {
+      const example = todayLocal();
+      example.setDate(example.getDate() + 14);
+      const exampleText = example.toLocaleDateString('en-CA', { month: 'long', day: 'numeric' });
+      return `What date would you like? You can say “tomorrow”, a weekday, or a date like ${exampleText}. We book up to 60 days ahead.`;
+    }
     case 'time':
       return 'What time should I book? We seat on the half hour from 11:00 AM–1:30 PM and 5:00–9:30 PM.';
     case 'guests':
@@ -63,12 +78,7 @@ export function quickChoicesFor(field: BookingField | null, draft: BookingDraft)
   }
   switch (field) {
     case 'date':
-      return [
-        { label: 'Today', value: 'today' },
-        { label: 'Tomorrow', value: 'tomorrow' },
-        { label: 'Friday', value: 'Friday' },
-        { label: 'Saturday', value: 'Saturday' },
-      ];
+      return dateChoices();
     case 'time': {
       const suggestions = draft.date
         ? suggestTimes(draft.date, draft.seating).map((t) => ({
@@ -107,6 +117,23 @@ export function quickChoicesFor(field: BookingField | null, draft: BookingDraft)
     default:
       return [];
   }
+}
+
+/** Next few bookable days, worked out from today's date so they never repeat or skip. */
+function dateChoices(): QuickChoice[] {
+  const today = todayLocal();
+  const choices: QuickChoice[] = [];
+  if (hasSeatingLeftToday()) choices.push({ label: 'Today', value: 'today' });
+  choices.push({ label: 'Tomorrow', value: 'tomorrow' });
+  for (let offset = 2; choices.length < 4; offset++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + offset);
+    const weekday = d.toLocaleDateString('en-CA', { weekday: 'long' });
+    const short = d.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' });
+    // The weekday name resolves to this exact date because it is 2–5 days away.
+    choices.push({ label: short, value: weekday });
+  }
+  return choices;
 }
 
 export function summarizeDraft(draft: BookingDraft): string {
@@ -259,7 +286,63 @@ export function processUserInput(
     };
   }
 
+  // Handle chip helpers for contact
+  if (/i will type my (email|phone)/i.test(text)) {
+    const reply = /email/i.test(text)
+      ? 'Great — type your email address when you’re ready.'
+      : 'Great — type your phone number when you’re ready.';
+    return {
+      ...state,
+      messages: [...baseMessages, msg('ava', reply)],
+      currentField: 'contact',
+      phase: 'collecting',
+      avaReply: reply,
+      quickChoices: [],
+    };
+  }
+
+  // A lone number while reviewing could mean guests or a time — ask instead of guessing.
+  const loneNumber = text.trim().match(/^(\d{1,2})$/);
+  if (loneNumber && state.currentField === null && nextMissingField(state.draft) === null) {
+    const num = Number(loneNumber[1]);
+    const choices: QuickChoice[] = [];
+    if (num >= 1 && num <= 12) choices.push({ label: `${num} guests`, value: `${num} people` });
+    const hour = num >= 1 && num <= 9 ? num + 12 : num;
+    if (hour >= 11 && hour <= 21) {
+      const hhmm = `${String(hour).padStart(2, '0')}:00`;
+      choices.push({ label: formatDisplayTime(hhmm), value: hhmm });
+    }
+    const reply =
+      choices.length > 0
+        ? `Did you mean ${choices.map((c) => c.label).join(' or ')}? Tap one below, or say “${num} people” or “${num} PM”.`
+        : `I’m not sure what “${num}” should change. Pick a detail below, or say something like “4 people” or “7:30 PM”.`;
+    return {
+      ...state,
+      messages: [...baseMessages, msg('ava', reply)],
+      phase: 'review',
+      currentField: null,
+      avaReply: reply,
+      quickChoices: choices.length > 0 ? choices : EDIT_CHOICES,
+      showConfirmModal: false,
+    };
+  }
+
   // Correction path
+  const reviewing = state.phase === 'review' || state.showConfirmModal || nextMissingField(state.draft) === null;
+  if (parsed.wantsCorrection && !parsed.correctionField && Object.keys(parsed.draftPatch).length === 0 && reviewing) {
+    const reply =
+      'Sure — what would you like to change? Pick a detail below, or just tell me the new value (for example “4 people” or “7:30 PM”).';
+    return {
+      ...state,
+      messages: [...baseMessages, msg('ava', reply)],
+      phase: 'review',
+      currentField: null,
+      avaReply: reply,
+      quickChoices: EDIT_CHOICES,
+      showConfirmModal: false,
+    };
+  }
+
   if (parsed.wantsCorrection && Object.keys(parsed.draftPatch).length === 0) {
     const field = parsed.correctionField ?? state.currentField ?? 'date';
     const reply = `Of course. ${fieldPrompt(field)}`;
@@ -276,7 +359,10 @@ export function processUserInput(
 
   // Review / confirm phase
   if (state.phase === 'review' || state.phase === 'confirming' || state.showConfirmModal) {
-    if (parsed.wantsConfirm) {
+    // A reply that carries new details ("actually make it 4 people") is applied below
+    // as an update, instead of being treated as a plain yes/no.
+    const hasNewDetails = Object.keys(parsed.draftPatch).length > 0;
+    if (parsed.wantsConfirm && !hasNewDetails) {
       const code = generateConfirmationCode();
       const reply = `You’re all set. Your table is reserved — confirmation ${code}. We collected only your booking details and contact for this reservation; nothing is stored on a server in this prototype. Enjoy your meal!`;
       return {
@@ -292,21 +378,16 @@ export function processUserInput(
         confirmationCode: code,
       };
     }
-    if (parsed.wantsDeny || parsed.wantsCorrection) {
-      const field = parsed.correctionField ?? 'date';
-      const reply = `No problem — what would you like to change? You can edit the date, time, guests, seating, name, or contact. ${fieldPrompt(field)}`;
+    if ((parsed.wantsDeny || parsed.wantsCorrection) && !hasNewDetails) {
+      const reply =
+        'No problem — what would you like to change? Pick a detail below, or just tell me the new value (for example “4 people” or “7:30 PM”).';
       return {
         ...state,
         messages: [...baseMessages, msg('ava', reply)],
-        phase: 'collecting',
-        currentField: field,
+        phase: 'review',
+        currentField: null,
         avaReply: reply,
-        quickChoices: [
-          { label: 'Date', value: 'change date' },
-          { label: 'Time', value: 'change time' },
-          { label: 'Guests', value: 'change guests' },
-          { label: 'Seating', value: 'change seating' },
-        ],
+        quickChoices: EDIT_CHOICES,
         showConfirmModal: false,
       };
     }
@@ -335,21 +416,6 @@ export function processUserInput(
       currentField: field,
       avaReply: reply,
       quickChoices: quickChoicesFor(field, state.draft),
-    };
-  }
-
-  // Handle chip helpers for contact
-  if (/i will type my (email|phone)/i.test(text)) {
-    const reply = /email/i.test(text)
-      ? 'Great — type your email address when you’re ready.'
-      : 'Great — type your phone number when you’re ready.';
-    return {
-      ...state,
-      messages: [...baseMessages, msg('ava', reply)],
-      currentField: 'contact',
-      phase: 'collecting',
-      avaReply: reply,
-      quickChoices: [],
     };
   }
 
