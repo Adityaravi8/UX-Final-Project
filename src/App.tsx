@@ -21,6 +21,12 @@ export default function App() {
   const [paused, setPaused] = useState(false);
   const [status, setStatus] = useState<AvatarStatus>('speaking');
   const [voiceHint, setVoiceHint] = useState<string | null>(null);
+  // Hands-free: after one tap on the mic, Ava listens again after each of her replies.
+  const [handsFree, setHandsFree] = useState(false);
+  const handsFreeRef = useRef(false);
+  const pausedRef = useRef(false);
+  const noSpeechCount = useRef(0);
+  const resumeTimer = useRef<number | undefined>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
   const lastSpokenRef = useRef<string>('');
   const engineRef = useRef(engine);
@@ -30,11 +36,38 @@ export default function App() {
     engineRef.current = engine;
   }, [engine]);
 
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+
+  function setHandsFreeMode(on: boolean) {
+    handsFreeRef.current = on;
+    setHandsFree(on);
+    if (!on) window.clearTimeout(resumeTimer.current);
+  }
+
+  /** In hands-free mode, start listening again once Ava has finished her reply. */
+  function resumeListening() {
+    window.clearTimeout(resumeTimer.current);
+    if (!handsFreeRef.current) return;
+    // Short pause so the mic doesn't catch the tail of Ava's voice.
+    resumeTimer.current = window.setTimeout(() => {
+      if (!handsFreeRef.current || pausedRef.current) return;
+      if (engineRef.current.phase === 'completed') {
+        setHandsFreeMode(false);
+        return;
+      }
+      if (typeof window !== 'undefined' && window.speechSynthesis?.speaking) return;
+      start();
+    }, 400);
+  }
+
   const { speak, cancel, supported: ttsSupported, speaking } = useSpeechSynthesis({
     enabled: ttsEnabled && !paused,
     onStart: () => setStatus('speaking'),
     onEnd: () => {
       setStatus((s) => (s === 'completed' ? 'completed' : 'waiting'));
+      resumeListening();
     },
   });
 
@@ -45,16 +78,33 @@ export default function App() {
     },
     onInterim: (t) => setInterim(t),
     onFinal: (transcript) => {
+      noSpeechCount.current = 0;
       setInterim('');
       setStatus('processing');
       window.setTimeout(() => {
         submitText(transcript, 'voice');
       }, 280);
     },
-    onError: (message) => {
-      setVoiceHint(message);
+    onError: (message, code) => {
       setStatus('waiting');
       setInterim('');
+      // Hands-free: a couple of silent turns just restart listening.
+      if (handsFreeRef.current && code === 'no-speech' && noSpeechCount.current < 2) {
+        noSpeechCount.current += 1;
+        setVoiceHint('Still listening — say your answer, or type it below.');
+        resumeListening();
+        return;
+      }
+      if (handsFreeRef.current) {
+        setHandsFreeMode(false);
+        setVoiceHint(
+          code === 'no-speech'
+            ? 'Hands-free stopped because I didn’t hear anything. Tap the mic to keep talking, or type your answer.'
+            : message,
+        );
+        return;
+      }
+      setVoiceHint(message);
     },
     onEnd: () => {
       setInterim('');
@@ -68,12 +118,16 @@ export default function App() {
       setStatus('completed');
     }
     if (ttsEnabled && !paused) {
-      speak(engine.avaReply);
+      speak(engine.avaReply); // resumes listening when speech ends
     } else if (engine.phase === 'completed') {
       setStatus('completed');
+      resumeListening();
     } else {
       setStatus('waiting');
+      resumeListening();
     }
+    // resumeListening only reads refs, so it does not need to be a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine.avaReply, engine.phase, ttsEnabled, paused, speak]);
 
   useEffect(() => {
@@ -157,11 +211,16 @@ export default function App() {
       setVoiceHint('Resume the session before using the microphone.');
       return;
     }
-    if (listening) {
+    if (handsFree || listening) {
+      setHandsFreeMode(false);
       stop();
+      setInterim('');
       setStatus('waiting');
       return;
     }
+    setHandsFreeMode(true);
+    noSpeechCount.current = 0;
+    setVoiceHint(null);
     cancel();
     setInterim('');
     start();
@@ -186,6 +245,7 @@ export default function App() {
     }
     cancel();
     stop();
+    setHandsFreeMode(false);
     setPaused(true);
     setStatus('paused');
     const reply =
@@ -318,16 +378,16 @@ export default function App() {
             />
             <button
               type="button"
-              className={`mic ${listening ? 'mic--on' : ''}`}
+              className={`mic ${listening ? 'mic--on' : handsFree ? 'mic--armed' : ''}`}
               onClick={handleMicToggle}
-              aria-pressed={listening}
-              aria-label={listening ? 'Stop listening' : 'Start voice input'}
+              aria-pressed={handsFree || listening}
+              aria-label={handsFree || listening ? 'Stop hands-free voice' : 'Start hands-free voice'}
               disabled={!sttSupported || engine.phase === 'completed'}
               title={
                 sttSupported
-                  ? listening
-                    ? 'Stop listening'
-                    : 'Speak your answer'
+                  ? handsFree || listening
+                    ? 'Stop hands-free voice'
+                    : 'Talk to Ava hands-free — she listens again after each reply'
                   : 'Voice not supported — type instead'
               }
             >
@@ -337,6 +397,12 @@ export default function App() {
               Send
             </button>
           </form>
+          {handsFree && (
+            <p className="handsfree-note" role="status">
+              <span className="handsfree-note__dot" aria-hidden="true" />
+              Hands-free on — Ava listens again after each reply. Tap the mic to stop.
+            </p>
+          )}
         </section>
 
         <BookingSummary
