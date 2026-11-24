@@ -459,7 +459,11 @@ export function processUserInput(
       phase: 'collecting',
       currentField: field,
       avaReply: reply,
-      quickChoices: quickChoicesFor(field, merged),
+      // Offer the same alternative times Ava just suggested, not the day's first slots.
+      quickChoices:
+        field === 'time' && suggestions && suggestions.length > 0
+          ? suggestions.slice(0, 4).map((t) => ({ label: formatDisplayTime(t), value: t }))
+          : quickChoicesFor(field, merged),
       showConfirmModal: false,
     };
   }
