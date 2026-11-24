@@ -207,7 +207,7 @@ export function isTimeAvailable(
   if (time === '18:00' && d && d.getDay() === 5) {
     return {
       ok: false,
-      reason: `Friday at ${formatDisplayTime(time)} is our busiest service and is fully booked. Try 6:30 PM or 7:00 PM.`,
+      reason: `Friday at ${formatDisplayTime(time)} is our busiest service and is fully booked.`,
       suggestions: ['18:30', '19:00', '17:30'].filter((t) => slotOpen(dateIso, t, seating)),
     };
   }

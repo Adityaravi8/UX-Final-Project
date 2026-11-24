@@ -71,5 +71,6 @@ If SpeechRecognition is unsupported, a banner explains the typed-only fallback.
 | Wireframes | [docs/wireframes.md](docs/wireframes.md) |
 | Usability testing plan | [docs/usability-testing.md](docs/usability-testing.md) |
 | Final UX report | [docs/final-ux-report.md](docs/final-ux-report.md) |
+| Presentation script (5–10 min demo) | [docs/presentation-script.md](docs/presentation-script.md) |
 
 Proposal topic is TableTalk (restaurant reservation with Ava) — unchanged from the submitted proposal.
