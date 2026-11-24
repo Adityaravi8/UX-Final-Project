@@ -1,0 +1,47 @@
+# TableTalk — requirements
+#
+# This is a Node.js (React + TypeScript) project, not a Python one, so pip is not used.
+# All packages below are installed with ONE command from the project folder:
+#
+#     npm install
+#
+# Then start the app with:
+#
+#     npm run dev        (opens on http://localhost:5173/)
+#
+# Exact versions are locked in package-lock.json; this file is a readable summary.
+
+# ---------------------------------------------------------------------------
+# System requirements
+# ---------------------------------------------------------------------------
+node >= 20.19.0          # or >= 22.12.0 (required by Vite 8). Tested on Node 26.13.1
+npm >= 10                # comes with Node. Tested on npm 11.20.0
+browser: Chrome or Edge  # desktop. Needed for voice input (Web Speech API).
+                         # Other browsers still work with typed answers.
+microphone               # optional; only for voice input
+
+# ---------------------------------------------------------------------------
+# App dependencies (package.json "dependencies")
+# ---------------------------------------------------------------------------
+react==19.3.1
+react-dom==19.3.1
+
+# ---------------------------------------------------------------------------
+# Development tools (package.json "devDependencies")
+# ---------------------------------------------------------------------------
+vite==8.3.8                  # dev server and production build
+@vitejs/plugin-react==6.3.0  # React support for Vite
+typescript==7.0.2            # type checking (npm run build)
+@types/react==19.3.0
+@types/react-dom==19.3.0
+@types/node==24.19.2
+oxlint==1.94.0               # linter (npm run lint)
+tsx==4.23.15                 # runs the conversation tests (npm run smoke)
+playwright==1.65.1           # browser automation for demo screenshots (scripts/playwright-demo.mjs)
+
+# ---------------------------------------------------------------------------
+# No external services
+# ---------------------------------------------------------------------------
+# No API keys, database, or backend server are needed. Speech recognition and
+# text-to-speech use the browser's built-in Web Speech API. Restaurant
+# availability is simulated in src/lib/availability.ts.
