@@ -31,7 +31,7 @@ Try a multi-field line early: `tomorrow at 7 for 2 outdoor`.
 ### Voice (Chrome / Edge recommended)
 
 1. Allow the microphone when prompted.
-2. Tap the mic, speak, watch the interim “Hearing…” transcript and the final user bubble.
+2. Tap the mic once to turn on **hands-free** mode. Speak, watch the interim “Hearing…” transcript and the final user bubble. After Ava replies (and finishes speaking), she listens again automatically, so you can complete the whole booking without touching anything. Tap the mic again to stop. Hands-free turns off on Pause, when the booking is confirmed, or after three silent turns in a row.
 3. Toggle **Ava speaks** for optional TTS; replies always appear as text.
 4. If recognition fails, use **Type instead** — the full task remains completable without voice.
 

@@ -447,6 +447,39 @@ a {
   cursor: not-allowed;
 }
 
+.mic--armed {
+  border-color: var(--champagne);
+  color: var(--champagne);
+  box-shadow: 0 0 0 2px rgba(232, 184, 109, 0.25);
+}
+
+.handsfree-note {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.45rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ivory-dim);
+}
+
+.handsfree-note__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--champagne);
+  animation: handsfree-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes handsfree-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
 .mic--on {
   background: rgba(184, 92, 60, 0.35);
   border-color: var(--clay);

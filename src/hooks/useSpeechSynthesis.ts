@@ -15,6 +15,8 @@ export function useSpeechSynthesis({ enabled, onStart, onEnd }: Options) {
   const [speaking, setSpeaking] = useState(false);
   const onStartRef = useRef(onStart);
   const onEndRef = useRef(onEnd);
+  const currentUtterance = useRef<SpeechSynthesisUtterance | null>(null);
+  const watchdog = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     onStartRef.current = onStart;
@@ -23,6 +25,8 @@ export function useSpeechSynthesis({ enabled, onStart, onEnd }: Options) {
 
   const cancel = useCallback(() => {
     if (!supported) return;
+    currentUtterance.current = null; // so the cancelled utterance's end event is ignored
+    window.clearTimeout(watchdog.current);
     window.speechSynthesis.cancel();
     setSpeaking(false);
   }, [supported]);
@@ -33,8 +37,10 @@ export function useSpeechSynthesis({ enabled, onStart, onEnd }: Options) {
         onEndRef.current?.();
         return;
       }
+      currentUtterance.current = null;
       window.speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(text);
+      currentUtterance.current = utter;
       utter.rate = 1.02;
       utter.pitch = 1.05;
       utter.lang = 'en-CA';
@@ -47,17 +53,30 @@ export function useSpeechSynthesis({ enabled, onStart, onEnd }: Options) {
       if (preferred) utter.voice = preferred;
 
       utter.onstart = () => {
+        if (currentUtterance.current !== utter) return;
         setSpeaking(true);
         onStartRef.current?.();
       };
-      utter.onend = () => {
+      const finish = () => {
+        if (currentUtterance.current !== utter) return;
+        currentUtterance.current = null;
+        window.clearTimeout(watchdog.current);
         setSpeaking(false);
         onEndRef.current?.();
       };
-      utter.onerror = () => {
-        setSpeaking(false);
-        onEndRef.current?.();
-      };
+      utter.onend = finish;
+      utter.onerror = finish;
+
+      // Some browsers (Chrome especially, on long sentences) never fire the end event.
+      // If speech has not reported finishing well after it should have, treat it as done
+      // so hands-free listening does not wait forever.
+      window.clearTimeout(watchdog.current);
+      const expectedMs = 2500 + text.length * 85;
+      watchdog.current = window.setTimeout(() => {
+        if (currentUtterance.current !== utter) return;
+        window.speechSynthesis.cancel();
+        finish();
+      }, expectedMs);
 
       window.speechSynthesis.speak(utter);
     },
@@ -66,6 +85,7 @@ export function useSpeechSynthesis({ enabled, onStart, onEnd }: Options) {
 
   useEffect(() => {
     return () => {
+      window.clearTimeout(watchdog.current);
       if (supported) window.speechSynthesis.cancel();
     };
   }, [supported]);

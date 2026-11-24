@@ -44,7 +44,8 @@ export function isSpeechRecognitionSupported(): boolean {
 interface Options {
   onFinal: (transcript: string) => void;
   onInterim?: (transcript: string) => void;
-  onError?: (message: string) => void;
+  /** `code` is the browser's error name, e.g. 'no-speech' or 'not-allowed'. */
+  onError?: (message: string, code: string) => void;
   onStart?: () => void;
   onEnd?: () => void;
 }
@@ -77,8 +78,10 @@ export function useSpeechRecognition({
 
   const stop = useCallback(() => {
     shouldListenRef.current = false;
+    const current = recognitionRef.current;
+    recognitionRef.current = null; // its late events are now ignored
     try {
-      recognitionRef.current?.stop();
+      current?.abort();
     } catch {
       /* ignore */
     }
@@ -90,6 +93,7 @@ export function useSpeechRecognition({
     if (!Ctor) {
       onErrorRef.current?.(
         'Voice input is not supported in this browser. Please type your answers instead.',
+        'not-supported',
       );
       return;
     }
@@ -107,12 +111,18 @@ export function useSpeechRecognition({
     recognitionRef.current = recognition;
     shouldListenRef.current = true;
 
+    // Events from an older recognition (one we replaced or stopped) are ignored,
+    // so they cannot flip the state of the one that is listening now.
+    const isCurrent = () => recognitionRef.current === recognition;
+
     recognition.onstart = () => {
+      if (!isCurrent()) return;
       setListening(true);
       onStartRef.current?.();
     };
 
     recognition.onresult = (event) => {
+      if (!isCurrent()) return;
       let interim = '';
       let finalText = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -127,27 +137,32 @@ export function useSpeechRecognition({
     };
 
     recognition.onerror = (event) => {
+      if (!isCurrent()) return;
       const err = event.error;
+      const wasWanted = shouldListenRef.current;
+      setListening(false);
+      shouldListenRef.current = false;
+      // We stopped it ourselves (e.g. the user typed instead) — not an error.
+      if (err === 'aborted' && !wasWanted) return;
       if (err === 'aborted' || err === 'no-speech') {
         onErrorRef.current?.(
           err === 'no-speech'
             ? 'I did not hear anything. Tap the mic to try again, or type your answer.'
             : 'Listening stopped. You can retry with the mic or type instead.',
+          err,
         );
-      } else if (err === 'not-allowed') {
+      } else if (err === 'not-allowed' || err === 'service-not-allowed') {
         onErrorRef.current?.(
           'Microphone permission was blocked. You can still complete the booking by typing.',
+          err,
         );
       } else {
-        onErrorRef.current?.(
-          'Voice recognition had trouble. Please retry or type your answer.',
-        );
+        onErrorRef.current?.('Voice recognition had trouble. Please retry or type your answer.', err);
       }
-      setListening(false);
-      shouldListenRef.current = false;
     };
 
     recognition.onend = () => {
+      if (!isCurrent()) return;
       setListening(false);
       onEndRef.current?.();
     };
@@ -157,6 +172,7 @@ export function useSpeechRecognition({
     } catch {
       onErrorRef.current?.(
         'Could not start the microphone. Please type your answer instead.',
+        'start-failed',
       );
       setListening(false);
     }
